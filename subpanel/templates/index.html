@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Subdomain Scanner Panel</title>
+<style>
+  :root {
+    --bg: #0f1117; --panel: #161923; --border: #262b3a;
+    --accent: #4f8cff; --text: #e6e8ef; --muted: #8b90a3;
+    --green: #3ecf8e; --red: #ff5d6c; --yellow: #ffb84f;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg); color: var(--text);
+  }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 32px 20px 60px; }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  .sub { color: var(--muted); font-size: 14px; margin-bottom: 24px; }
+  .card {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 12px; padding: 20px; margin-bottom: 20px;
+  }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; }
+  input[type=text] {
+    flex: 1; min-width: 220px; background: #0d0f16; border: 1px solid var(--border);
+    color: var(--text); padding: 12px 14px; border-radius: 8px; font-size: 14px;
+  }
+  input[type=text]:focus { outline: none; border-color: var(--accent); }
+  button {
+    background: var(--accent); color: white; border: none; padding: 12px 20px;
+    border-radius: 8px; font-size: 14px; cursor: pointer; font-weight: 600;
+  }
+  button:hover { filter: brightness(1.1); }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .opts { display: flex; gap: 18px; margin-top: 12px; font-size: 13px; color: var(--muted); }
+  .opts label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+  .stats { display: flex; gap: 16px; margin: 16px 0; }
+  .stat { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 12px 18px; flex: 1; }
+  .stat .num { font-size: 24px; font-weight: 700; }
+  .stat .label { font-size: 12px; color: var(--muted); }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; color: var(--muted); font-weight: 600; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  td { padding: 10px 12px; border-bottom: 1px solid #1e2230; }
+  tr:hover td { background: #1a1d29; }
+  .badge { display: inline-block; padding: 3px 9px; border-radius: 6px; font-size: 12px; font-weight: 600; }
+  .badge.alive { background: rgba(62,207,142,0.15); color: var(--green); }
+  .badge.dead { background: rgba(255,93,108,0.15); color: var(--red); }
+  .badge.cdn { background: rgba(79,140,255,0.15); color: var(--accent); }
+  .badge.none { background: rgba(139,144,163,0.15); color: var(--muted); }
+  .ip-list { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 12px; color: var(--muted); }
+  .loading { text-align: center; padding: 40px; color: var(--muted); }
+  .spinner {
+    width: 28px; height: 28px; border: 3px solid var(--border); border-top-color: var(--accent);
+    border-radius: 50%; animation: spin 0.8s linear infinite; margin: 0 auto 12px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+  .toolbar input { max-width: 260px; }
+  .export-btn { background: transparent; border: 1px solid var(--border); color: var(--text); }
+  .error { color: var(--red); padding: 12px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🔍 Subdomain Scanner Panel</h1>
+  <div class="sub">Tìm subdomain, IP và loại CDN đang sử dụng cho một domain</div>
+
+  <div class="card">
+    <div class="row">
+      <input type="text" id="domainInput" placeholder="vd: example.com" autofocus>
+      <button id="scanBtn" onclick="scan()">Quét ngay</button>
+    </div>
+    <div class="opts">
+      <label><input type="checkbox" id="optSubfinder" checked> Dùng subfinder (nếu có cài trên máy)</label>
+      <label><input type="checkbox" id="optBrute" checked> Brute-force wordlist cơ bản</label>
+    </div>
+  </div>
+
+  <div id="statsBox" class="stats" style="display:none;">
+    <div class="stat"><div class="num" id="statTotal">0</div><div class="label">Tổng số tìm thấy</div></div>
+    <div class="stat"><div class="num" id="statAlive">0</div><div class="label">Đang hoạt động</div></div>
+    <div class="stat"><div class="num" id="statCdn">0</div><div class="label">Dùng CDN</div></div>
+  </div>
+
+  <div id="resultBox"></div>
+</div>
+
+<script>
+let lastResults = [];
+
+async function scan() {
+  const domain = document.getElementById('domainInput').value.trim();
+  const btn = document.getElementById('scanBtn');
+  const resultBox = document.getElementById('resultBox');
+  const statsBox = document.getElementById('statsBox');
+
+  if (!domain) { alert('Nhập tên miền cần quét'); return; }
+
+  btn.disabled = true;
+  statsBox.style.display = 'none';
+  resultBox.innerHTML = '<div class="loading"><div class="spinner"></div>Đang quét ' + domain + ' ... có thể mất 30-90 giây</div>';
+
+  try {
+    const res = await fetch('/api/scan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        domain: domain,
+        subfinder: document.getElementById('optSubfinder').checked,
+        bruteforce: document.getElementById('optBrute').checked
+      })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      resultBox.innerHTML = '<div class="card error">Lỗi: ' + (data.error || 'không xác định') + '</div>';
+      return;
+    }
+    lastResults = data.results;
+    renderResults(data);
+  } catch (e) {
+    resultBox.innerHTML = '<div class="card error">Lỗi kết nối: ' + e.message + '</div>';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function renderResults(data) {
+  const statsBox = document.getElementById('statsBox');
+  const resultBox = document.getElementById('resultBox');
+  const cdnCount = data.results.filter(r => r.cdn && !r.cdn.startsWith('Không')).length;
+
+  document.getElementById('statTotal').textContent = data.total;
+  document.getElementById('statAlive').textContent = data.alive;
+  document.getElementById('statCdn').textContent = cdnCount;
+  statsBox.style.display = 'flex';
+
+  let rows = data.results.map(r => `
+    <tr>
+      <td>${escapeHtml(r.subdomain)}</td>
+      <td class="ip-list">${r.ip && r.ip.length ? r.ip.join('<br>') : '-'}</td>
+      <td>${r.cdn.startsWith('Không') ? '<span class="badge none">' + r.cdn + '</span>' : '<span class="badge cdn">' + escapeHtml(r.cdn) + '</span>'}</td>
+      <td>${r.alive ? '<span class="badge alive">Hoạt động</span>' : '<span class="badge dead">Không phản hồi</span>'}</td>
+    </tr>
+  `).join('');
+
+  resultBox.innerHTML = `
+    <div class="card">
+      <div class="toolbar">
+        <input type="text" placeholder="Lọc kết quả..." oninput="filterTable(this.value)">
+        <button class="export-btn" onclick="exportCsv()">Xuất CSV</button>
+      </div>
+      <table id="resultTable">
+        <thead><tr><th>Subdomain</th><th>IP</th><th>CDN</th><th>Trạng thái</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+function filterTable(q) {
+  q = q.toLowerCase();
+  document.querySelectorAll('#resultTable tbody tr').forEach(tr => {
+    tr.style.display = tr.textContent.toLowerCase().includes(q) ? '' : 'none';
+  });
+}
+
+function exportCsv() {
+  if (!lastResults.length) return;
+  const header = 'subdomain,ip,cdn,alive\n';
+  const rows = lastResults.map(r => `${r.subdomain},"${(r.ip||[]).join('|')}",${r.cdn},${r.alive}`).join('\n');
+  const blob = new Blob([header + rows], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'subdomains.csv';
+  a.click();
+}
+
+function escapeHtml(s) {
+  return (s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+document.getElementById('domainInput').addEventListener('keydown', e => {
+  if (e.key === 'Enter') scan();
+});
+</script>
+</body>
+</html>
