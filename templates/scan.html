@@ -40,18 +40,12 @@
 {% block scripts %}
 <script>
 let lastResults = [];
+let pollTimer = null;
+const JOB_STORAGE_KEY = 'subpanel_active_job';
 
 async function scan() {
   const domain = document.getElementById('domainInput').value.trim();
-  const btn = document.getElementById('scanBtn');
-  const resultBox = document.getElementById('resultBox');
-  const statsBox = document.getElementById('statsBox');
-
   if (!domain) { alert('Nhập tên miền cần quét'); return; }
-
-  btn.disabled = true;
-  statsBox.style.display = 'none';
-  resultBox.innerHTML = '<div class="loading"><div class="spinner"></div>Đang quét ' + domain + ' ... có thể mất 30-90 giây</div>';
 
   try {
     const res = await fetch('/api/scan', {
@@ -66,17 +60,89 @@ async function scan() {
     });
     const data = await res.json();
     if (!res.ok) {
-      resultBox.innerHTML = '<div class="card error">Lỗi: ' + (data.error || 'không xác định') + '</div>';
+      document.getElementById('resultBox').innerHTML = '<div class="card error">Lỗi: ' + (data.error || 'không xác định') + '</div>';
       return;
     }
-    lastResults = data.results;
-    renderResults(data);
+    // Job is now running server-side in the background. Remember it so we
+    // keep showing progress even if this page is reloaded or reopened later.
+    localStorage.setItem(JOB_STORAGE_KEY, JSON.stringify({ job_id: data.job_id, domain: domain }));
+    startPolling(data.job_id, domain);
   } catch (e) {
-    resultBox.innerHTML = '<div class="card error">Lỗi kết nối: ' + e.message + '</div>';
-  } finally {
-    btn.disabled = false;
+    document.getElementById('resultBox').innerHTML = '<div class="card error">Lỗi kết nối: ' + e.message + '</div>';
   }
 }
+
+function startPolling(jobId, domain) {
+  const btn = document.getElementById('scanBtn');
+  const resultBox = document.getElementById('resultBox');
+  const statsBox = document.getElementById('statsBox');
+  const wildcardBox = document.getElementById('wildcardBox');
+  const sourceBox = document.getElementById('sourceBox');
+
+  btn.disabled = true;
+  statsBox.style.display = 'none';
+  wildcardBox.style.display = 'none';
+  sourceBox.style.display = 'none';
+  if (pollTimer) clearInterval(pollTimer);
+
+  const tick = async () => {
+    try {
+      const res = await fetch('/api/scan/status/' + jobId);
+      const job = await res.json();
+
+      if (!res.ok) {
+        clearInterval(pollTimer);
+        pollTimer = null;
+        btn.disabled = false;
+        localStorage.removeItem(JOB_STORAGE_KEY);
+        resultBox.innerHTML = '<div class="card error">Lỗi: ' + (job.error || 'không tìm thấy tiến trình quét') + '</div>';
+        return;
+      }
+
+      if (job.status === 'error') {
+        clearInterval(pollTimer);
+        pollTimer = null;
+        btn.disabled = false;
+        localStorage.removeItem(JOB_STORAGE_KEY);
+        resultBox.innerHTML = '<div class="card error">Lỗi: ' + (job.error || 'không xác định') + '</div>';
+        return;
+      }
+
+      if (job.status === 'done') {
+        clearInterval(pollTimer);
+        pollTimer = null;
+        btn.disabled = false;
+        localStorage.removeItem(JOB_STORAGE_KEY);
+        lastResults = job.result.results;
+        renderResults(job.result);
+        return;
+      }
+
+      // still queued/running — show current stage, keep polling
+      resultBox.innerHTML = '<div class="loading"><div class="spinner"></div>Đang quét <b>' + escapeHtml(job.domain || domain) +
+        '</b>... (bạn có thể rời trang, quá trình vẫn tiếp tục chạy nền)<br><span style="font-size:13px;">' +
+        escapeHtml(job.stage || '') + '</span></div>';
+    } catch (e) {
+      // network hiccup while polling — just try again next tick
+    }
+  };
+
+  tick();
+  pollTimer = setInterval(tick, 1500);
+}
+
+// If a scan was left running when the page was closed/navigated away,
+// resume polling automatically so progress/results still show up.
+(function resumeJobIfAny() {
+  const saved = localStorage.getItem(JOB_STORAGE_KEY);
+  if (!saved) return;
+  try {
+    const { job_id, domain } = JSON.parse(saved);
+    if (job_id) startPolling(job_id, domain);
+  } catch (e) {
+    localStorage.removeItem(JOB_STORAGE_KEY);
+  }
+})();
 
 function renderResults(data) {
   const statsBox = document.getElementById('statsBox');

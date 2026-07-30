@@ -30,6 +30,60 @@
     {% block content %}{% endblock %}
   </div>
 </div>
+{% if active != 'scan' %}
+<div id="globalJobBanner" class="job-banner" style="display:none;"></div>
+<script>
+(function () {
+  const KEY = 'subpanel_active_job';
+  const banner = document.getElementById('globalJobBanner');
+  const saved = localStorage.getItem(KEY);
+  if (!saved) return;
+
+  let job_id, domain;
+  try {
+    ({ job_id, domain } = JSON.parse(saved));
+  } catch (e) { localStorage.removeItem(KEY); return; }
+  if (!job_id) return;
+
+  function escapeHtml(s) {
+    return (s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  function render(job) {
+    banner.style.display = 'flex';
+    if (job.status === 'done') {
+      banner.classList.add('done');
+      banner.innerHTML = '<div class="job-text"><div class="job-domain">✅ Quét xong: ' + escapeHtml(domain) +
+        '</div><div class="job-stage">' + job.result.total + ' subdomain tìm thấy</div></div>' +
+        '<a class="job-link" href="{{ url_for(\'index\') }}">Xem</a>';
+    } else if (job.status === 'error') {
+      banner.innerHTML = '<div class="job-text"><div class="job-domain">⚠️ Lỗi khi quét ' + escapeHtml(domain) +
+        '</div><div class="job-stage">' + escapeHtml(job.error || '') + '</div></div>' +
+        '<a class="job-link" href="{{ url_for(\'index\') }}">Xem</a>';
+    } else {
+      banner.innerHTML = '<div class="mini-spinner"></div><div class="job-text"><div class="job-domain">Đang quét ' +
+        escapeHtml(domain) + '</div><div class="job-stage">' + escapeHtml(job.stage || '') + '</div></div>' +
+        '<a class="job-link" href="{{ url_for(\'index\') }}">Xem</a>';
+    }
+  }
+
+  async function tick() {
+    try {
+      const res = await fetch('/api/scan/status/' + job_id);
+      const job = await res.json();
+      if (!res.ok) { banner.style.display = 'none'; return; }
+      render(job);
+      if (job.status === 'running' || job.status === 'queued') {
+        setTimeout(tick, 2500);
+      }
+    } catch (e) {
+      setTimeout(tick, 4000);
+    }
+  }
+  tick();
+})();
+</script>
+{% endif %}
 {% block scripts %}{% endblock %}
 </body>
 </html>

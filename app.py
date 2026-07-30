@@ -19,6 +19,7 @@ import json
 import os
 import secrets
 import sqlite3
+import threading
 import time
 from datetime import datetime
 from functools import wraps
@@ -34,6 +35,65 @@ CONFIG_FILE = os.path.join(BASE_DIR, "config.json")
 DB_FILE = os.path.join(BASE_DIR, "history.db")
 
 app = Flask(__name__)
+
+# -----------------------------------------------------------------------
+# Background scan jobs — in-memory job registry so a scan started from the
+# web UI keeps running (and finishes) even if the user closes the tab or
+# navigates elsewhere. Keyed by job_id, protected by JOBS_LOCK since jobs
+# run in their own threads separate from Flask's request handling.
+# -----------------------------------------------------------------------
+JOBS = {}
+JOBS_LOCK = threading.Lock()
+JOB_MAX_AGE = 3600  # drop finished job records after 1h to bound memory use
+
+
+def _set_job(job_id, **fields):
+    with JOBS_LOCK:
+        if job_id in JOBS:
+            JOBS[job_id].update(fields)
+
+
+def _prune_old_jobs():
+    now = time.time()
+    with JOBS_LOCK:
+        stale = [jid for jid, j in JOBS.items()
+                 if j.get("status") in ("done", "error") and now - j.get("created_at", now) > JOB_MAX_AGE]
+        for jid in stale:
+            del JOBS[jid]
+
+
+def _run_scan_job(job_id, domain, use_subfinder, use_brute, use_permutation):
+    def progress(stage):
+        _set_job(job_id, stage=stage)
+
+    try:
+        _set_job(job_id, status="running", stage="Đang khởi tạo...")
+        result = core.run_scan(
+            domain,
+            use_subfinder=use_subfinder,
+            use_brute=use_brute,
+            use_permutation=use_permutation,
+            progress_cb=progress,
+        )
+
+        cdn_count = sum(1 for r in result["results"] if r["alive"] and not r["cdn"].startswith("Không"))
+
+        # Background thread needs its own sqlite connection (can't use flask.g here).
+        conn = sqlite3.connect(DB_FILE)
+        try:
+            conn.execute(
+                "INSERT INTO scans (domain, created_at, total, alive, cdn_count, results_json) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (result["domain"], int(time.time()), result["total"], result["alive"], cdn_count,
+                 json.dumps(result["results"], ensure_ascii=False))
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        _set_job(job_id, status="done", stage="Hoàn tất", result=result)
+    except Exception as e:
+        _set_job(job_id, status="error", stage="Lỗi", error=str(e))
 
 
 @app.template_filter("timestamp_to_str")
@@ -149,33 +209,43 @@ def index():
 @app.route("/api/scan", methods=["POST"])
 @login_required
 def api_scan():
+    _prune_old_jobs()
     data = request.get_json(force=True)
     domain = (data.get("domain") or "").strip()
     use_brute = bool(data.get("bruteforce", True))
     use_subfinder = bool(data.get("subfinder", True))
     use_permutation = bool(data.get("permutation", True))
 
-    try:
-        result = core.run_scan(
-            domain,
-            use_subfinder=use_subfinder,
-            use_brute=use_brute,
-            use_permutation=use_permutation,
-        )
-    except ValueError as e:
-        return jsonify({"error": str(e)}), 400
+    if not domain:
+        return jsonify({"error": "Nhập tên miền cần quét"}), 400
 
-    cdn_count = sum(1 for r in result["results"] if r["alive"] and not r["cdn"].startswith("Không"))
+    job_id = secrets.token_hex(8)
+    with JOBS_LOCK:
+        JOBS[job_id] = {
+            "status": "queued",
+            "stage": "Đang xếp hàng...",
+            "domain": domain,
+            "created_at": time.time(),
+        }
 
-    db = get_db()
-    db.execute(
-        "INSERT INTO scans (domain, created_at, total, alive, cdn_count, results_json) VALUES (?, ?, ?, ?, ?, ?)",
-        (result["domain"], int(time.time()), result["total"], result["alive"], cdn_count,
-         json.dumps(result["results"], ensure_ascii=False))
+    thread = threading.Thread(
+        target=_run_scan_job,
+        args=(job_id, domain, use_subfinder, use_brute, use_permutation),
+        daemon=True,
     )
-    db.commit()
+    thread.start()
 
-    return jsonify(result)
+    return jsonify({"job_id": job_id}), 202
+
+
+@app.route("/api/scan/status/<job_id>")
+@login_required
+def api_scan_status(job_id):
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+        if not job:
+            return jsonify({"error": "Không tìm thấy tiến trình quét này (có thể đã hết hạn)"}), 404
+        return jsonify(dict(job))
 
 
 # -----------------------------------------------------------------------
@@ -253,4 +323,4 @@ def account():
 
 if __name__ == "__main__":
     port = int(os.environ.get("SUBPANEL_PORT", 9081))
-    app.run(host="0.0.0.0", port=port, debug=False)
+    app.run(host="0.0.0.0", port=port, debug=False, threaded=True)

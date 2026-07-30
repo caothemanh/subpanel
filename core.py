@@ -481,32 +481,45 @@ def analyze_subdomain(hostname, resolver):
     }
 
 
-def run_scan(domain, use_subfinder=True, use_brute=True, use_permutation=True):
+def run_scan(domain, use_subfinder=True, use_brute=True, use_permutation=True, progress_cb=None):
+    def report(stage):
+        if progress_cb:
+            try:
+                progress_cb(stage)
+            except Exception:
+                pass
+
     domain = re.sub(r"^https?://", "", domain.strip().lower()).split("/")[0]
     if not domain or "." not in domain:
         raise ValueError("Tên miền không hợp lệ")
 
     resolver = get_resolver()
+
+    report("Đang kiểm tra DNS wildcard...")
     wildcard_ips = detect_wildcard(domain, resolver)
 
     # 1) All free passive sources (crt.sh, HackerTarget, RapidDNS, CertSpotter,
     #    AlienVault OTX, Anubis, Wayback Machine) run in parallel.
+    report("Đang thu thập dữ liệu từ 7 nguồn passive (crt.sh, HackerTarget, RapidDNS, CertSpotter, AlienVault OTX, Anubis, Wayback Machine)...")
     subdomains, source_counts = gather_passive(domain)
 
     # 2) Optional local subfinder binary, if installed on the host.
     if use_subfinder:
+        report("Đang chạy subfinder...")
         found = from_subfinder(domain)
         source_counts["subfinder"] = len(found)
         subdomains |= found
 
     # 3) Optional DNS brute-force with the user's wordlist.
     if use_brute:
+        report(f"Đang brute-force wordlist ({len(load_wordlist())} từ)...")
         found = from_bruteforce(domain, resolver, wildcard_ips=wildcard_ips)
         source_counts["Brute-force wordlist"] = len(found)
         subdomains |= found
 
         # 4) Permutations built from names already found (dev-api, api-dev, ...)
         if use_permutation:
+            report("Đang dò permutation (dev-api, api-dev, ...)...")
             perm_candidates = generate_permutations(subdomains, domain)
             perm_found = resolve_hosts(perm_candidates, resolver, wildcard_ips=wildcard_ips)
             source_counts["Permutation"] = len(perm_found)
@@ -514,6 +527,7 @@ def run_scan(domain, use_subfinder=True, use_brute=True, use_permutation=True):
 
     subdomains.add(domain)
 
+    report(f"Đang phân tích IP/CNAME/CDN cho {len(subdomains)} subdomain...")
     results = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
         futures = {ex.submit(analyze_subdomain, sd, get_resolver()): sd for sd in subdomains}
