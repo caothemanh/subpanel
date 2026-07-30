@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}{{ scan['domain'] }} — Chi tiết quét{% endblock %}
+{% block content %}
+<h1>{{ scan['domain'] }}</h1>
+<div class="sub">Quét lúc {{ scan['created_at'] | int | timestamp_to_str }} · <a href="{{ url_for('history') }}" style="color:var(--accent);">← Quay lại lịch sử</a></div>
+
+<div class="stats">
+  <div class="stat"><div class="num">{{ scan['total'] }}</div><div class="label">Tổng số tìm thấy</div></div>
+  <div class="stat"><div class="num">{{ scan['alive'] }}</div><div class="label">Đang hoạt động</div></div>
+  <div class="stat"><div class="num">{{ scan['cdn_count'] }}</div><div class="label">Dùng CDN</div></div>
+</div>
+
+<div class="card">
+  <div class="toolbar">
+    <input type="text" placeholder="Lọc kết quả..." oninput="filterTable(this.value)">
+  </div>
+  <table id="resultTable">
+    <thead><tr><th>Subdomain</th><th>IP</th><th>CDN</th><th>Trạng thái</th></tr></thead>
+    <tbody>
+      {% for r in results %}
+      <tr>
+        <td>{{ r.subdomain }}</td>
+        <td class="ip-list">{{ (r.ip or []) | join('<br>') | safe if r.ip else '-' }}</td>
+        <td>
+          {% if r.cdn.startswith('Không') %}
+            <span class="badge none">{{ r.cdn }}</span>
+          {% else %}
+            <span class="badge cdn">{{ r.cdn }}</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if r.alive %}<span class="badge alive">Hoạt động</span>{% else %}<span class="badge dead">Không phản hồi</span>{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function filterTable(q) {
+  q = q.toLowerCase();
+  document.querySelectorAll('#resultTable tbody tr').forEach(tr => {
+    tr.style.display = tr.textContent.toLowerCase().includes(q) ? '' : 'none';
+  });
+}
+</script>
+{% endblock %}

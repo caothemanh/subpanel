@@ -1,0 +1,14 @@
+[Unit]
+Description=Subdomain Scanner Panel
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/subpanel
+ExecStart=/opt/subpanel/venv/bin/python3 /opt/subpanel/app.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Wordlist — SubPanel{% endblock %}
+{% block content %}
+<h1>Wordlist brute-force</h1>
+<div class="sub">Mỗi dòng là một tên subdomain sẽ được thử khi bật tuỳ chọn "Brute-force wordlist" lúc quét</div>
+
+<div class="card">
+  <form method="post">
+    <textarea name="content" spellcheck="false">{{ content }}</textarea>
+    <div style="margin-top:14px;">
+      <button type="submit">Lưu wordlist</button>
+    </div>
+  </form>
+</div>
+{% endblock %}

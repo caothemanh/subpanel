@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Lịch sử quét — SubPanel{% endblock %}
+{% block content %}
+<h1>Lịch sử quét</h1>
+<div class="sub">Danh sách các lần quét đã thực hiện (tối đa 200 bản ghi gần nhất)</div>
+
+<div class="card">
+  {% if scans %}
+  <table>
+    <thead>
+      <tr><th>Domain</th><th>Thời gian</th><th>Tổng số</th><th>Hoạt động</th><th>Dùng CDN</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for s in scans %}
+      <tr>
+        <td><a href="{{ url_for('history_detail', scan_id=s['id']) }}">{{ s['domain'] }}</a></td>
+        <td>{{ s['created_at'] | int | timestamp_to_str }}</td>
+        <td>{{ s['total'] }}</td>
+        <td>{{ s['alive'] }}</td>
+        <td>{{ s['cdn_count'] }}</td>
+        <td style="text-align:right;">
+          <a href="{{ url_for('history_detail', scan_id=s['id']) }}" class="btn btn-outline" style="padding:6px 12px; font-size:12px;">Xem</a>
+          <form method="post" action="{{ url_for('history_delete', scan_id=s['id']) }}" style="display:inline;" onsubmit="return confirm('Xoá bản ghi quét cho {{ s['domain'] }}?');">
+            <button type="submit" class="btn-danger" style="padding:6px 12px; font-size:12px;">Xoá</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty">Chưa có lần quét nào. Vào mục "Quét mới" để bắt đầu.</div>
+  {% endif %}
+</div>
+{% endblock %}

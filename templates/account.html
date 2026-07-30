@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Tài khoản — SubPanel{% endblock %}
+{% block content %}
+<h1>Tài khoản</h1>
+<div class="sub">Đăng nhập với tên: <strong>{{ username }}</strong></div>
+
+<div class="card" style="max-width:420px;">
+  <form method="post" style="display:flex; flex-direction:column; gap:12px;">
+    <input type="password" name="current_password" placeholder="Mật khẩu hiện tại" required>
+    <input type="password" name="new_password" placeholder="Mật khẩu mới (tối thiểu 6 ký tự)" required>
+    <input type="password" name="confirm_password" placeholder="Xác nhận mật khẩu mới" required>
+    <button type="submit">Đổi mật khẩu</button>
+  </form>
+</div>
+{% endblock %}
