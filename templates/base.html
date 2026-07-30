@@ -35,6 +35,7 @@
 <script>
 (function () {
   const KEY = 'subpanel_active_job';
+  const SCAN_URL = "{{ url_for('index') }}";
   const banner = document.getElementById('globalJobBanner');
   const saved = localStorage.getItem(KEY);
   if (!saved) return;
@@ -55,15 +56,15 @@
       banner.classList.add('done');
       banner.innerHTML = '<div class="job-text"><div class="job-domain">✅ Quét xong: ' + escapeHtml(domain) +
         '</div><div class="job-stage">' + job.result.total + ' subdomain tìm thấy</div></div>' +
-        '<a class="job-link" href="{{ url_for(\'index\') }}">Xem</a>';
+        '<a class="job-link" href="' + SCAN_URL + '">Xem</a>';
     } else if (job.status === 'error') {
       banner.innerHTML = '<div class="job-text"><div class="job-domain">⚠️ Lỗi khi quét ' + escapeHtml(domain) +
         '</div><div class="job-stage">' + escapeHtml(job.error || '') + '</div></div>' +
-        '<a class="job-link" href="{{ url_for(\'index\') }}">Xem</a>';
+        '<a class="job-link" href="' + SCAN_URL + '">Xem</a>';
     } else {
       banner.innerHTML = '<div class="mini-spinner"></div><div class="job-text"><div class="job-domain">Đang quét ' +
         escapeHtml(domain) + '</div><div class="job-stage">' + escapeHtml(job.stage || '') + '</div></div>' +
-        '<a class="job-link" href="{{ url_for(\'index\') }}">Xem</a>';
+        '<a class="job-link" href="' + SCAN_URL + '">Xem</a>';
     }
   }
 
