@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
 #
-# install.sh — cài đặt Subdomain Scanner Panel chỉ bằng 1 lệnh:
+# install.sh — cài đặt Subdomain Scanner Panel chỉ bằng 1 lệnh, chạy thẳng
+# từ GitHub, không cần tải file hay cd thủ công:
 #
-#     sudo bash install.sh
+#     sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/caothemanh/subpanel/main/install.sh)"
+#
+# (hoặc nếu bạn đã tự clone/tải repo về máy, chạy `sudo bash install.sh` trong
+# thư mục đó cũng được — script tự nhận biết cả hai trường hợp)
 #
 # Script sẽ:
-#   1. Cài các gói hệ thống cần thiết (python3, venv, pip, ufw...)
-#   2. Copy toàn bộ project vào /opt/subpanel
+#   1. Cài các gói hệ thống cần thiết (python3, venv, pip, git, ufw...)
+#   2. Clone/cập nhật code từ GitHub vào /opt/subpanel
 #   3. Tạo virtualenv riêng + cài thư viện Python
 #   4. Hỏi bạn tên đăng nhập / mật khẩu admin (hoặc tự sinh nếu chạy không tương tác)
 #   5. Cài Go + subfinder (tuỳ chọn, để có kết quả subdomain đầy đủ hơn)
@@ -15,14 +19,17 @@
 #
 set -euo pipefail
 
+# ĐỔI 2 DÒNG DƯỚI ĐÂY CHO KHỚP VỚI REPO GITHUB CỦA BẠN TRƯỚC KHI PUSH LÊN:
+REPO_URL="${REPO_URL:-https://github.com/caothemanh/subpanel.git}"
+BRANCH="${BRANCH:-main}"
+
 INSTALL_DIR="/opt/subpanel"
 SERVICE_NAME="subpanel"
 PORT="5000"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ---------------------------------------------------------------------------
 if [[ $EUID -ne 0 ]]; then
-  echo "Script này cần chạy bằng quyền root. Hãy chạy lại: sudo bash install.sh"
+  echo "Script này cần chạy bằng quyền root. Hãy chạy lại với: sudo bash install.sh"
   exit 1
 fi
 
@@ -35,13 +42,19 @@ echo ""
 echo "[1/7] Cài gói hệ thống cần thiết..."
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y -qq python3 python3-venv python3-pip ufw curl git rsync > /dev/null
+apt-get install -y -qq python3 python3-venv python3-pip ufw curl git > /dev/null
 
 # ---------------------------------------------------------------------------
-echo "[2/7] Copy project vào ${INSTALL_DIR} ..."
-mkdir -p "$INSTALL_DIR"
-rsync -a --exclude 'venv' --exclude 'history.db' --exclude 'config.json' \
-  "$SCRIPT_DIR"/ "$INSTALL_DIR"/ 2>/dev/null || cp -r "$SCRIPT_DIR"/. "$INSTALL_DIR"/
+echo "[2/7] Lấy code từ GitHub (${REPO_URL}, nhánh ${BRANCH})..."
+if [[ -d "$INSTALL_DIR/.git" ]]; then
+  echo "  Đã có sẵn ở ${INSTALL_DIR} -> git pull cập nhật bản mới nhất."
+  git -C "$INSTALL_DIR" fetch --quiet origin "$BRANCH"
+  git -C "$INSTALL_DIR" reset --quiet --hard "origin/$BRANCH"
+elif [[ -d "$INSTALL_DIR" && -f "$INSTALL_DIR/app.py" ]]; then
+  echo "  ${INSTALL_DIR} đã tồn tại (không phải git repo) -> giữ nguyên, không ghi đè."
+else
+  git clone --quiet --branch "$BRANCH" --depth 1 "$REPO_URL" "$INSTALL_DIR"
+fi
 
 # ---------------------------------------------------------------------------
 echo "[3/7] Tạo virtualenv và cài thư viện Python..."

@@ -3,23 +3,50 @@
 Panel web (có đăng nhập, có menu) để tìm subdomain của 1 domain, lấy IP tương ứng
 và phát hiện loại CDN đang dùng — kèm lịch sử các lần quét.
 
-## Cài đặt — chỉ 1 lệnh
+## Bước 1 — Đẩy code lên GitHub
+
+Trong thư mục `subpanel/` (vừa giải nén), chạy:
 
 ```bash
-sudo bash install.sh
+git init
+git add .
+git commit -m "Subdomain Scanner Panel"
+git branch -M main
+git remote add origin https://github.com/caothemanh/subpanel.git
+git push -u origin main
 ```
 
-Chạy lệnh trên từ trong thư mục đã giải nén (`subpanel/`). Script sẽ tự động:
+(Trước đó nhớ tạo repo rỗng tên `subpanel` trên GitHub — https://github.com/new — public hoặc private đều được, xem lưu ý ở cuối)
 
-1. Cài gói hệ thống cần thiết (python3, venv, ufw, curl...)
-2. Copy toàn bộ project vào `/opt/subpanel`
+## Bước 2 — Cài đặt trên VPS chỉ bằng 1 lệnh
+
+Mở `install.sh`, sửa 2 dòng đầu cho khớp đúng repo/nhánh của bạn (mặc định đã để sẵn `caothemanh/subpanel` nhánh `main`) rồi push lại. Sau đó trên VPS (Ubuntu), chỉ cần:
+
+```bash
+sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/caothemanh/subpanel/main/install.sh)"
+```
+
+Không cần tải file, không cần `cd`, không cần giải nén gì cả — script tự:
+
+1. Cài gói hệ thống cần thiết (python3, venv, git, ufw, curl...)
+2. Clone code trực tiếp từ GitHub vào `/opt/subpanel`
 3. Tạo virtualenv riêng + cài thư viện Python
 4. Hỏi bạn đặt tên đăng nhập / mật khẩu admin (nếu chạy không tương tác, tự sinh mật khẩu ngẫu nhiên và in ra màn hình)
 5. Cài `subfinder` nếu máy đã có Go (bỏ qua nếu chưa có — panel vẫn chạy tốt với crt.sh + brute-force)
 6. Tạo systemd service `subpanel`, bật tự khởi động cùng hệ thống
 7. Mở port 5000 trên `ufw` nếu đang bật
 
-Sau khi chạy xong, script in ra địa chỉ truy cập + tài khoản đăng nhập.
+Chạy lại đúng lệnh trên bất cứ lúc nào để **cập nhật lên bản mới nhất** trên GitHub — script tự `git pull` mà không mất tài khoản đăng nhập hay lịch sử quét đã lưu.
+
+## Nếu repo GitHub để Private
+
+Lệnh `curl` ở trên chỉ hoạt động với repo **public**. Nếu để private, cách đơn giản nhất là dùng Personal Access Token trong REPO_URL:
+
+```bash
+sudo REPO_URL="https://<TOKEN>@github.com/caothemanh/subpanel.git" bash -c "$(curl -fsSL https://raw.githubusercontent.com/caothemanh/subpanel/main/install.sh)"
+```
+
+(cần lấy được `install.sh` bằng cách khác nếu repo private, ví dụ scp file này lên VPS trước, vì `curl` không đọc được raw file của repo private nếu không có token trong URL raw.githubusercontent.com)
 
 ## Các menu trong panel
 

@@ -1,0 +1,5 @@
+venv/
+config.json
+history.db
+__pycache__/
+*.pyc
