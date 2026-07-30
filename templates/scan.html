@@ -12,7 +12,20 @@
   <div class="opts">
     <label><input type="checkbox" id="optSubfinder" checked> Dùng subfinder (nếu có cài trên máy)</label>
     <label><input type="checkbox" id="optBrute" checked> Brute-force wordlist</label>
+    <label><input type="checkbox" id="optPermutation" checked> Permutation (dev-api, api-dev...)</label>
   </div>
+  <div class="sub" style="margin-top:8px;">
+    Nguồn passive luôn bật (miễn phí, không cần API key): crt.sh, HackerTarget, RapidDNS, CertSpotter, AlienVault OTX, Anubis, Wayback Machine
+  </div>
+</div>
+
+<div id="wildcardBox" class="card error" style="display:none; margin-top:12px;">
+  ⚠️ Domain này có <b>DNS wildcard</b> (mọi tên ngẫu nhiên đều resolve ra IP). Panel đã tự lọc bớt kết quả brute-force/permutation trùng IP wildcard để giảm sai số, nhưng hãy kiểm tra thủ công các kết quả nghi ngờ.
+</div>
+
+<div id="sourceBox" class="card" style="display:none; margin-top:12px;">
+  <div class="sub" style="margin-bottom:8px;">Số lượng tìm được theo từng nguồn</div>
+  <div id="sourceCounts" class="opts"></div>
 </div>
 
 <div id="statsBox" class="stats" style="display:none;">
@@ -47,7 +60,8 @@ async function scan() {
       body: JSON.stringify({
         domain: domain,
         subfinder: document.getElementById('optSubfinder').checked,
-        bruteforce: document.getElementById('optBrute').checked
+        bruteforce: document.getElementById('optBrute').checked,
+        permutation: document.getElementById('optPermutation').checked
       })
     });
     const data = await res.json();
@@ -67,12 +81,24 @@ async function scan() {
 function renderResults(data) {
   const statsBox = document.getElementById('statsBox');
   const resultBox = document.getElementById('resultBox');
+  const wildcardBox = document.getElementById('wildcardBox');
+  const sourceBox = document.getElementById('sourceBox');
   const cdnCount = data.results.filter(r => r.alive && r.cdn && !r.cdn.startsWith('Không')).length;
 
   document.getElementById('statTotal').textContent = data.total;
   document.getElementById('statAlive').textContent = data.alive;
   document.getElementById('statCdn').textContent = cdnCount;
   statsBox.style.display = 'flex';
+
+  wildcardBox.style.display = data.has_wildcard ? 'block' : 'none';
+
+  if (data.source_counts) {
+    const entries = Object.entries(data.source_counts).sort((a, b) => b[1] - a[1]);
+    document.getElementById('sourceCounts').innerHTML = entries
+      .map(([name, count]) => `<span class="badge cdn" style="margin:4px 6px 4px 0;display:inline-block;">${escapeHtml(name)}: ${count}</span>`)
+      .join('');
+    sourceBox.style.display = 'block';
+  }
 
   let rows = data.results.map(r => `
     <tr>

@@ -153,9 +153,15 @@ def api_scan():
     domain = (data.get("domain") or "").strip()
     use_brute = bool(data.get("bruteforce", True))
     use_subfinder = bool(data.get("subfinder", True))
+    use_permutation = bool(data.get("permutation", True))
 
     try:
-        result = core.run_scan(domain, use_subfinder=use_subfinder, use_brute=use_brute)
+        result = core.run_scan(
+            domain,
+            use_subfinder=use_subfinder,
+            use_brute=use_brute,
+            use_permutation=use_permutation,
+        )
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
 

@@ -59,9 +59,21 @@ sudo REPO_URL="https://<TOKEN>@github.com/caothemanh/subpanel.git" bash -c "$(cu
 
 ## Nguồn dữ liệu tìm subdomain
 
-- **crt.sh** — tra cứu chứng chỉ SSL đã cấp (Certificate Transparency), luôn dùng, không cần API key.
-- **subfinder** (tuỳ chọn) — nếu có cài, dùng thêm để có kết quả đầy đủ hơn.
-- **Brute-force wordlist** — thử các tên subdomain phổ biến, chỉnh trực tiếp trong menu Wordlist.
+Passive (luôn bật, miễn phí, không cần API key), chạy song song:
+
+- **crt.sh** — Certificate Transparency logs
+- **HackerTarget** — hostsearch API
+- **RapidDNS** — passive DNS aggregator
+- **CertSpotter** — Certificate Transparency logs (nguồn thứ 2, hay bắt được cái crt.sh bỏ sót)
+- **AlienVault OTX** — passive DNS
+- **Anubis / JLDC** — passive DNS
+- **Wayback Machine (CDX API)** — quét URL đã lưu trữ để lấy tên subdomain từng xuất hiện
+
+Chủ động (tuỳ chọn, bật/tắt được lúc quét):
+
+- **subfinder** — nếu máy đã cài Go và binary `subfinder`, dùng thêm để gộp kết quả.
+- **Brute-force wordlist** — thử ~500 tên subdomain phổ biến có sẵn (chỉnh sửa trong menu Wordlist), có tự phát hiện DNS wildcard để lọc bớt kết quả giả.
+- **Permutation** — với mỗi subdomain đã tìm được (vd `api`), tự thử thêm các biến thể môi trường phổ biến (`dev-api`, `api-dev`, `staging-api`, `api-v2`...).
 
 ## Cách phát hiện CDN
 

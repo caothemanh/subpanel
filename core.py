@@ -9,19 +9,34 @@ import ipaddress
 import json
 import os
 import re
+import secrets
 import shutil
 import subprocess
 import time
+from urllib.parse import urlparse
 
 import dns.resolver
 import requests
 
 MAX_WORKERS = 30
 HTTP_TIMEOUT = 4
+SOURCE_TIMEOUT = 20
 DNS_TIMEOUT = 3
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WORDLIST_FILE = os.path.join(BASE_DIR, "wordlist.txt")
 CLOUDFLARE_RANGES_CACHE = {"v4": [], "v6": [], "ts": 0}
+
+UA = "Mozilla/5.0 (compatible; subpanel-scanner/1.0)"
+SESSION = requests.Session()
+SESSION.headers.update({"User-Agent": UA})
+
+# Common prefixes/suffixes used to generate permutations from subdomains
+# that were already discovered, to catch things like dev-api, api-v2, etc.
+PERMUTATION_TOKENS = [
+    "dev", "test", "staging", "stg", "uat", "qa", "prod", "preprod", "demo",
+    "new", "old", "v1", "v2", "internal", "int", "backup", "bak", "beta",
+    "alpha", "sandbox", "corp", "admin",
+]
 
 CDN_CNAME_SIGNATURES = [
     ("Cloudflare", ["cloudflare.net", "cloudflare.com"]),
@@ -84,11 +99,23 @@ def save_wordlist(text):
         f.write(text.strip() + "\n")
 
 
+# -----------------------------------------------------------------------
+# Passive sources — all free, no API key required.
+# Each function returns a set of "sub.domain.tld" strings (lowercase,
+# no leading '*.', guaranteed to end with the queried domain).
+# -----------------------------------------------------------------------
+def _clean(name, domain):
+    name = (name or "").strip().lower().lstrip("*.")
+    if name.endswith(domain) and re.match(r"^[a-z0-9_.-]+$", name):
+        return name
+    return None
+
+
 def from_crtsh(domain):
     found = set()
     url = f"https://crt.sh/?q=%25.{domain}&output=json"
     try:
-        r = requests.get(url, timeout=15)
+        r = SESSION.get(url, timeout=SOURCE_TIMEOUT)
         if r.status_code == 200 and r.text.strip():
             try:
                 data = r.json()
@@ -97,11 +124,125 @@ def from_crtsh(domain):
             for entry in data:
                 name_value = entry.get("name_value", "")
                 for name in name_value.split("\n"):
-                    name = name.strip().lower().lstrip("*.")
-                    if name.endswith(domain):
-                        found.add(name)
+                    cleaned = _clean(name, domain)
+                    if cleaned:
+                        found.add(cleaned)
     except Exception as e:
         print(f"[crt.sh] error: {e}")
+    return found
+
+
+def from_hackertarget(domain):
+    found = set()
+    try:
+        r = SESSION.get(
+            "https://api.hackertarget.com/hostsearch/",
+            params={"q": domain}, timeout=SOURCE_TIMEOUT,
+        )
+        if r.status_code == 200 and "error" not in r.text.lower()[:40]:
+            for line in r.text.splitlines():
+                name = line.split(",")[0]
+                cleaned = _clean(name, domain)
+                if cleaned:
+                    found.add(cleaned)
+    except Exception as e:
+        print(f"[hackertarget] error: {e}")
+    return found
+
+
+def from_rapiddns(domain):
+    found = set()
+    try:
+        r = SESSION.get(
+            f"https://rapiddns.io/subdomain/{domain}",
+            params={"full": "1"}, timeout=SOURCE_TIMEOUT,
+        )
+        if r.status_code == 200:
+            for name in re.findall(r"<td>([a-zA-Z0-9_.*-]+\." + re.escape(domain) + r")</td>", r.text):
+                cleaned = _clean(name, domain)
+                if cleaned:
+                    found.add(cleaned)
+    except Exception as e:
+        print(f"[rapiddns] error: {e}")
+    return found
+
+
+def from_certspotter(domain):
+    found = set()
+    try:
+        r = SESSION.get(
+            "https://api.certspotter.com/v1/issuances",
+            params={"domain": domain, "include_subdomains": "true", "expand": "dns_names"},
+            timeout=SOURCE_TIMEOUT,
+        )
+        if r.status_code == 200:
+            for entry in r.json():
+                for name in entry.get("dns_names", []):
+                    cleaned = _clean(name, domain)
+                    if cleaned:
+                        found.add(cleaned)
+    except Exception as e:
+        print(f"[certspotter] error: {e}")
+    return found
+
+
+def from_alienvault(domain):
+    found = set()
+    try:
+        r = SESSION.get(
+            f"https://otx.alienvault.com/api/v1/indicators/domain/{domain}/passive_dns",
+            timeout=SOURCE_TIMEOUT,
+        )
+        if r.status_code == 200:
+            for entry in r.json().get("passive_dns", []):
+                cleaned = _clean(entry.get("hostname", ""), domain)
+                if cleaned:
+                    found.add(cleaned)
+    except Exception as e:
+        print(f"[alienvault] error: {e}")
+    return found
+
+
+def from_anubis(domain):
+    found = set()
+    try:
+        r = SESSION.get(f"https://jldc.me/anubis/subdomains/{domain}", timeout=SOURCE_TIMEOUT)
+        if r.status_code == 200:
+            for name in r.json():
+                cleaned = _clean(name, domain)
+                if cleaned:
+                    found.add(cleaned)
+    except Exception as e:
+        print(f"[anubis] error: {e}")
+    return found
+
+
+def from_wayback(domain):
+    found = set()
+    try:
+        r = SESSION.get(
+            "https://web.archive.org/cdx/search/cdx",
+            params={
+                "url": f"*.{domain}/*",
+                "output": "json",
+                "fl": "original",
+                "collapse": "urlkey",
+                "limit": "100000",
+            },
+            timeout=SOURCE_TIMEOUT,
+        )
+        if r.status_code == 200:
+            rows = r.json()
+            for row in (rows[1:] if rows else []):  # first row is the header
+                try:
+                    host = urlparse(row[0]).hostname or ""
+                except Exception:
+                    continue
+                cleaned = _clean(host, domain)
+                if cleaned:
+                    found.add(cleaned)
+    except Exception as e:
+        print(f"[wayback] error: {e}")
     return found
 
 
@@ -116,25 +257,77 @@ def from_subfinder(domain):
             capture_output=True, text=True, timeout=120
         )
         for line in proc.stdout.splitlines():
-            line = line.strip().lower()
-            if line.endswith(domain):
-                found.add(line)
+            cleaned = _clean(line, domain)
+            if cleaned:
+                found.add(cleaned)
     except Exception as e:
         print(f"[subfinder] error: {e}")
     return found
 
 
-def from_bruteforce(domain, resolver):
+PASSIVE_SOURCES = [
+    ("crt.sh", from_crtsh),
+    ("HackerTarget", from_hackertarget),
+    ("RapidDNS", from_rapiddns),
+    ("CertSpotter", from_certspotter),
+    ("AlienVault OTX", from_alienvault),
+    ("Anubis/JLDC", from_anubis),
+    ("Wayback Machine", from_wayback),
+]
+
+
+def gather_passive(domain):
+    """Run every passive source concurrently, return (merged set, per-source counts)."""
+    merged = set()
+    counts = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(PASSIVE_SOURCES)) as ex:
+        futures = {ex.submit(fn, domain): name for name, fn in PASSIVE_SOURCES}
+        for fut in concurrent.futures.as_completed(futures):
+            name = futures[fut]
+            try:
+                found = fut.result()
+            except Exception as e:
+                found = set()
+                print(f"[{name}] error: {e}")
+            counts[name] = len(found)
+            merged |= found
+    return merged, counts
+
+
+# -----------------------------------------------------------------------
+# DNS / wildcard / brute-force
+# -----------------------------------------------------------------------
+def get_resolver():
+    resolver = dns.resolver.Resolver()
+    resolver.timeout = DNS_TIMEOUT
+    resolver.lifetime = DNS_TIMEOUT
+    return resolver
+
+
+def detect_wildcard(domain, resolver):
+    """Query a random, near-certainly-nonexistent label. If it resolves,
+    the zone has a DNS wildcard and brute-force/permutation results must be
+    filtered against these IPs to avoid a flood of false positives."""
+    label = f"nx-{secrets.token_hex(5)}"
+    ips = resolve_a_records(f"{label}.{domain}", resolver)
+    return set(ips)
+
+
+def from_bruteforce(domain, resolver, wildcard_ips=None, words=None):
     found = set()
-    words = load_wordlist()
+    wildcard_ips = wildcard_ips or set()
+    words = words if words is not None else load_wordlist()
 
     def check(word):
         candidate = f"{word}.{domain}"
         try:
-            resolver.resolve(candidate, "A")
-            return candidate
+            answers = resolver.resolve(candidate, "A")
+            ips = {str(r) for r in answers}
         except Exception:
             return None
+        if wildcard_ips and ips and ips.issubset(wildcard_ips):
+            return None
+        return candidate
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
         for result in ex.map(check, words):
@@ -143,11 +336,48 @@ def from_bruteforce(domain, resolver):
     return found
 
 
-def get_resolver():
-    resolver = dns.resolver.Resolver()
-    resolver.timeout = DNS_TIMEOUT
-    resolver.lifetime = DNS_TIMEOUT
-    return resolver
+def resolve_hosts(hosts, resolver, wildcard_ips=None):
+    """Resolve a list of already-fully-qualified hostnames, dropping any
+    that only match the wildcard IP set."""
+    wildcard_ips = wildcard_ips or set()
+    found = set()
+
+    def check(host):
+        try:
+            answers = resolver.resolve(host, "A")
+            ips = {str(r) for r in answers}
+        except Exception:
+            return None
+        if wildcard_ips and ips and ips.issubset(wildcard_ips):
+            return None
+        return host
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
+        for result in ex.map(check, hosts):
+            if result:
+                found.add(result)
+    return found
+
+
+def generate_permutations(known_subdomains, domain):
+    """Build candidate hostnames like dev-api.domain / api-dev.domain from
+    the first-level labels of subdomains already discovered."""
+    labels = set()
+    suffix = "." + domain
+    for sd in known_subdomains:
+        if not sd.endswith(suffix):
+            continue
+        prefix = sd[: -len(suffix)]
+        first_label = prefix.split(".")[0] if prefix else ""
+        if first_label and first_label not in PERMUTATION_TOKENS:
+            labels.add(first_label)
+
+    candidates = set()
+    for label in labels:
+        for token in PERMUTATION_TOKENS:
+            candidates.add(f"{token}-{label}.{domain}")
+            candidates.add(f"{label}-{token}.{domain}")
+    return candidates
 
 
 def refresh_cloudflare_ranges():
@@ -155,8 +385,8 @@ def refresh_cloudflare_ranges():
     if now - CLOUDFLARE_RANGES_CACHE["ts"] < 3600 and CLOUDFLARE_RANGES_CACHE["v4"]:
         return
     try:
-        v4 = requests.get("https://www.cloudflare.com/ips-v4", timeout=5).text.split()
-        v6 = requests.get("https://www.cloudflare.com/ips-v6", timeout=5).text.split()
+        v4 = SESSION.get("https://www.cloudflare.com/ips-v4", timeout=5).text.split()
+        v6 = SESSION.get("https://www.cloudflare.com/ips-v6", timeout=5).text.split()
         CLOUDFLARE_RANGES_CACHE["v4"] = [ipaddress.ip_network(c) for c in v4 if c]
         CLOUDFLARE_RANGES_CACHE["v6"] = [ipaddress.ip_network(c) for c in v6 if c]
         CLOUDFLARE_RANGES_CACHE["ts"] = now
@@ -215,9 +445,9 @@ def detect_cdn_from_cname(cname_chain):
 def detect_cdn_from_headers(hostname):
     for scheme in ("https", "http"):
         try:
-            r = requests.head(
+            r = SESSION.head(
                 f"{scheme}://{hostname}", timeout=HTTP_TIMEOUT,
-                allow_redirects=True, headers={"User-Agent": "Mozilla/5.0 (subdomain-scanner)"}
+                allow_redirects=True,
             )
             headers = {k.lower(): v.lower() for k, v in r.headers.items()}
             for header_name, value_substr, cdn_name in CDN_HEADER_SIGNATURES:
@@ -251,19 +481,37 @@ def analyze_subdomain(hostname, resolver):
     }
 
 
-def run_scan(domain, use_subfinder=True, use_brute=True):
+def run_scan(domain, use_subfinder=True, use_brute=True, use_permutation=True):
     domain = re.sub(r"^https?://", "", domain.strip().lower()).split("/")[0]
     if not domain or "." not in domain:
         raise ValueError("Tên miền không hợp lệ")
 
     resolver = get_resolver()
+    wildcard_ips = detect_wildcard(domain, resolver)
 
-    subdomains = set()
-    subdomains |= from_crtsh(domain)
+    # 1) All free passive sources (crt.sh, HackerTarget, RapidDNS, CertSpotter,
+    #    AlienVault OTX, Anubis, Wayback Machine) run in parallel.
+    subdomains, source_counts = gather_passive(domain)
+
+    # 2) Optional local subfinder binary, if installed on the host.
     if use_subfinder:
-        subdomains |= from_subfinder(domain)
+        found = from_subfinder(domain)
+        source_counts["subfinder"] = len(found)
+        subdomains |= found
+
+    # 3) Optional DNS brute-force with the user's wordlist.
     if use_brute:
-        subdomains |= from_bruteforce(domain, resolver)
+        found = from_bruteforce(domain, resolver, wildcard_ips=wildcard_ips)
+        source_counts["Brute-force wordlist"] = len(found)
+        subdomains |= found
+
+        # 4) Permutations built from names already found (dev-api, api-dev, ...)
+        if use_permutation:
+            perm_candidates = generate_permutations(subdomains, domain)
+            perm_found = resolve_hosts(perm_candidates, resolver, wildcard_ips=wildcard_ips)
+            source_counts["Permutation"] = len(perm_found)
+            subdomains |= perm_found
+
     subdomains.add(domain)
 
     results = []
@@ -284,4 +532,6 @@ def run_scan(domain, use_subfinder=True, use_brute=True):
         "total": len(results),
         "alive": sum(1 for r in results if r["alive"]),
         "results": results,
+        "has_wildcard": bool(wildcard_ips),
+        "source_counts": source_counts,
     }
