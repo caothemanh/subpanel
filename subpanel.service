@@ -5,6 +5,7 @@ After=network.target
 [Service]
 Type=simple
 User=root
+Environment=SUBPANEL_PORT=9081
 WorkingDirectory=/opt/subpanel
 ExecStart=/opt/subpanel/venv/bin/python3 /opt/subpanel/app.py
 Restart=on-failure

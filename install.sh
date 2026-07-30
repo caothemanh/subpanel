@@ -25,7 +25,7 @@ BRANCH="${BRANCH:-main}"
 
 INSTALL_DIR="/opt/subpanel"
 SERVICE_NAME="subpanel"
-PORT="5000"
+PORT="${PORT:-9081}"
 
 # ---------------------------------------------------------------------------
 if [[ $EUID -ne 0 ]]; then
@@ -128,6 +128,7 @@ After=network.target
 [Service]
 Type=simple
 User=root
+Environment=SUBPANEL_PORT=${PORT}
 WorkingDirectory=${INSTALL_DIR}
 ExecStart=${INSTALL_DIR}/venv/bin/python3 ${INSTALL_DIR}/app.py
 Restart=on-failure
@@ -138,7 +139,8 @@ WantedBy=multi-user.target
 EOF
 
 systemctl daemon-reload
-systemctl enable --now "${SERVICE_NAME}" > /dev/null 2>&1
+systemctl enable "${SERVICE_NAME}" > /dev/null 2>&1
+systemctl restart "${SERVICE_NAME}"
 sleep 2
 systemctl is-active --quiet "${SERVICE_NAME}" && echo "  Service đang chạy." || {
   echo "  !! Service không khởi động được, xem log bằng: journalctl -u ${SERVICE_NAME} -e"
